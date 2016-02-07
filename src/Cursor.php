@@ -54,6 +54,11 @@ class Cursor
     private $firstNonSpaceCache;
 
     /**
+     * @var bool
+     */
+    private $partiallyConsumedTab = false;
+
+    /**
      * @param string $line
      */
     public function __construct($line)
@@ -186,30 +191,42 @@ class Cursor
             return;
         }
 
+        $this->previousPosition = $this->currentPosition;
         $this->firstNonSpaceCache = null;
 
-        $i = 0;
-        $cols = 0;
-        while ($advanceByColumns ? ($cols < $characters) : ($i < $characters)) {
-            if ($this->peek($i) === "\t") {
-                $cols += (4 - (($this->column + $cols) % 4));
+        while ($characters > 0 && ($c = $this->getCharacter()) !== null) {
+            if ($c === "\t") {
+                $charsToTab = 4 - ($this->column % 4);
+                $this->partiallyConsumedTab = $advanceByColumns && $charsToTab > $characters;
+                $charsToAdvance = $charsToTab > $characters ? $characters : $charsToTab;
+                $this->column += $charsToAdvance;
+                $this->currentPosition += $this->partiallyConsumedTab ? 0 : 1;
+                $characters -= ($advanceByColumns ? $charsToAdvance : 1);
             } else {
-                $cols++;
+                $this->partiallyConsumedTab = false;
+                $this->currentPosition++;
+                $this->column++;
+                $characters--;
             }
+        }
+    }
 
-            $i++;
+    /**
+     * Advances the cursor by a single space or tab, if present
+     *
+     * @return bool
+     */
+    public function advanceBySpaceOrTab()
+    {
+        $character = $this->getCharacter();
+
+        if ($character === ' ' || $character === "\t") {
+            $this->advanceBy(1, true);
+
+            return true;
         }
 
-        $this->previousPosition = $this->currentPosition;
-        $newPosition = $this->currentPosition + $i;
-
-        $this->column += $cols;
-
-        if ($newPosition >= $this->length) {
-            $this->currentPosition = $this->length;
-        } else {
-            $this->currentPosition = $newPosition;
-        }
+        return false;
     }
 
     /**
@@ -274,9 +291,17 @@ class Cursor
     {
         if ($this->isAtEnd()) {
             return '';
-        } else {
-            return mb_substr($this->line, $this->currentPosition, $this->length, 'utf-8');
         }
+
+        $prefix = '';
+        $position = $this->currentPosition;
+        if ($this->partiallyConsumedTab) {
+            $position++;
+            $charsToTab = 4 - ($this->column % 4);
+            $prefix = str_repeat(' ', $charsToTab);
+        }
+
+        return $prefix . mb_substr($this->line, $position, $this->length, 'utf-8');
     }
 
     /**
